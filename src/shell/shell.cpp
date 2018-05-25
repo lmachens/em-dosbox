@@ -91,14 +91,28 @@ void AutoexecObject::CreateAutoexec(void) {
 	//Create a new autoexec.bat
 	autoexec_data[0] = 0;
 	size_t auto_len;
-	for(auto_it it=  autoexec_strings.begin(); it != autoexec_strings.end(); it++) {
+	for(auto_it it = autoexec_strings.begin(); it != autoexec_strings.end(); it++) {
+
+		std::string linecopy = (*it);
+		std::string::size_type offset = 0;
+		//Lets have \r\n as line ends in autoexec.bat.
+		while(offset < linecopy.length()) {
+			std::string::size_type  n = linecopy.find("\n",offset);
+			if ( n == std::string::npos ) break;
+			std::string::size_type rn = linecopy.find("\r\n",offset);
+			if ( rn != std::string::npos && rn + 1 == n) {offset = n + 1; continue;}
+			// \n found without matching \r
+			linecopy.replace(n,1,"\r\n");
+			offset = n + 2;
+		}
+
 		auto_len = strlen(autoexec_data);
-		if ((auto_len+(*it).length()+3)>AUTOEXEC_SIZE) {
+		if ((auto_len+linecopy.length() + 3) > AUTOEXEC_SIZE) {
 			E_Exit("SYSTEM:Autoexec.bat file overflow");
 		}
-		sprintf((autoexec_data+auto_len),"%s\r\n",(*it).c_str());
+		sprintf((autoexec_data + auto_len),"%s\r\n",linecopy.c_str());
 	}
-	if(first_shell) VFILE_Register("AUTOEXEC.BAT",(Bit8u *)autoexec_data,(Bit32u)strlen(autoexec_data));
+	if (first_shell) VFILE_Register("AUTOEXEC.BAT",(Bit8u *)autoexec_data,(Bit32u)strlen(autoexec_data));
 }
 
 AutoexecObject::~AutoexecObject(){
@@ -354,14 +368,25 @@ public:
 		char * extra = const_cast<char*>(section->data.c_str());
 		if (extra && !secure && !control->cmdline->FindExist("-noautoexec",true)) {
 			/* detect if "echo off" is the first line */
+			size_t firstline_length = strcspn(extra,"\r\n");
 			bool echo_off  = !strncasecmp(extra,"echo off",8);
-			if (!echo_off) echo_off = !strncasecmp(extra,"@echo off",9);
+			if (echo_off && firstline_length == 8) extra += 8;
+			else {
+				echo_off = !strncasecmp(extra,"@echo off",9);
+				if (echo_off && firstline_length == 9) extra += 9;
+				else echo_off = false;
+			}
 
-			/* if "echo off" add it to the front of autoexec.bat */
-			if(echo_off) autoexec_echo.InstallBefore("@echo off");
+			/* if "echo off" move it to the front of autoexec.bat */
+			if (echo_off)  { 
+				autoexec_echo.InstallBefore("@echo off");
+				if (*extra == '\r') extra++; //It can point to \0
+				if (*extra == '\n') extra++; //same
+			}
 
-			/* Install the stuff from the configfile */
-			autoexec[0].Install(section->data);
+			/* Install the stuff from the configfile if anything left after moving echo off */
+
+			if (*extra) autoexec[0].Install(std::string(extra));
 		}
 
 		/* Check to see for extra command line options to be added (before the command specified on commandline) */
@@ -554,35 +579,37 @@ void SHELL_Init() {
 	MSG_Add("SHELL_CMD_SUBST_FAILURE","SUBST failed. You either made an error in your commandline or the target drive is already used.\nIt's only possible to use SUBST on Local drives");
 
 	MSG_Add("SHELL_STARTUP_BEGIN",
-		"\033[44;1m\xC9\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD"
+		"\033[30;46;1m\xC9\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD"
 		"\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD"
 		"\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xBB\n"
-		"\xBA \033[32mWelcome to DOSBox %-8s\033[37m                                         \xBA\n"
+		"\xBA \033[37mWelcome to DOSBox %s (Enhanced Community Edition)!\033[30m                \xBA\n"
 		"\xBA                                                                    \xBA\n"
 //		"\xBA DOSBox runs real and protected mode games.                         \xBA\n"
-		"\xBA For a short introduction for new users type: \033[33mINTRO\033[37m                 \xBA\n"
-		"\xBA For supported shell commands type: \033[33mHELP\033[37m                            \xBA\n"
+		"\xBA For a short introduction for new users type: \033[32mINTRO\033[30m                 \xBA\n"
+		"\xBA For supported shell commands type: \033[32mHELP\033[30m                            \xBA\n"
 		"\xBA                                                                    \xBA\n"
-		"\xBA To adjust the emulated CPU speed, use \033[31mctrl-F11\033[37m and \033[31mctrl-F12\033[37m.       \xBA\n"
-		"\xBA To activate the keymapper \033[31mctrl-F1\033[37m.                                 \xBA\n"
-		"\xBA For more information read the \033[36mREADME\033[37m file in the DOSBox directory. \xBA\n"
+		"\xBA To adjust the emulated CPU speed, use \033[31mctrl-F11\033[37m and \033[31mctrl-F12\033[30m.       \xBA\n"
+		"\xBA To activate the keymapper \033[31mctrl-F1\033[30m.                                 \xBA\n"
+		"\xBA For more information read the \033[36mREADME\033[30m file in the DOSBox directory. \xBA\n"
+		"\xBA For more information about the applied patches read the            \xBA\n"
+		"\xBA \033[36mPATCHES\033[30m file in the DOSBox directory.                              \xBA\n"		
 		"\xBA                                                                    \xBA\n"
 	);
 	MSG_Add("SHELL_STARTUP_CGA","\xBA DOSBox supports Composite CGA mode.                                \xBA\n"
-	        "\xBA Use \033[31mF12\033[37m to set composite output ON, OFF, or AUTO (default).        \xBA\n"
-	        "\xBA \033[31m(Alt-)F11\033[37m changes hue; \033[31mctrl-alt-F11\033[37m selects early/late CGA model.  \xBA\n"
+	        "\xBA Use \033[31mF12\033[30m to set composite output ON, OFF, or AUTO (default).        \xBA\n"
+	        "\xBA \033[31m(Alt-)F11\033[30m changes hue; \033[31mctrl-alt-F11\033[30m selects early/late CGA model.  \xBA\n"
 	        "\xBA                                                                    \xBA\n"
 	);
-	MSG_Add("SHELL_STARTUP_HERC","\xBA Use \033[31mF11\033[37m to cycle through white, amber, and green monochrome color. \xBA\n"
+	MSG_Add("SHELL_STARTUP_HERC","\xBA Use \033[31mF11\033[30m to cycle through white, amber, and green monochrome color. \xBA\n"
 	        "\xBA                                                                    \xBA\n"
 	);
 	MSG_Add("SHELL_STARTUP_DEBUG",
-	        "\xBA Press \033[31malt-Pause\033[37m to enter the debugger or start the exe with \033[33mDEBUG\033[37m. \xBA\n"
+	        "\xBA Press \033[31malt-Pause\033[30m to enter the debugger or start the exe with \033[32mDEBUG\033[30m. \xBA\n"
 	        "\xBA                                                                    \xBA\n"
 	);
 	MSG_Add("SHELL_STARTUP_END",
-	        "\xBA \033[32mHAVE FUN!\033[37m                                                          \xBA\n"
-	        "\xBA \033[32mThe DOSBox Team \033[33mhttp://www.dosbox.com\033[37m                              \xBA\n"
+	        "\xBA \033[37mHAVE FUN!\033[30m                                                          \xBA\n"
+	        "\xBA \033[37mThe DOSBox Team \033[32mhttp://www.dosbox.com\033[30m                              \xBA\n"
 	        "\xC8\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD"
 	        "\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD"
 	        "\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xCD\xBC\033[0m\n"

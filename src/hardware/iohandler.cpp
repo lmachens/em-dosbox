@@ -308,7 +308,7 @@ void IO_WriteB(Bitu port,Bitu val) {
 		reg_eip = RealOff(icb)+0x08;
 		CPU_Exception(cpu.exception.which,cpu.exception.error);
 
-		DOSBOX_RunMachineNoSleep();
+		DOSBOX_RunMachine();
 		iof_queue.used--;
 
 		reg_al = old_al;
@@ -344,7 +344,7 @@ void IO_WriteW(Bitu port,Bitu val) {
 		reg_eip = RealOff(icb)+0x0a;
 		CPU_Exception(cpu.exception.which,cpu.exception.error);
 
-		DOSBOX_RunMachineNoSleep();
+		DOSBOX_RunMachine();
 		iof_queue.used--;
 
 		reg_ax = old_ax;
@@ -380,7 +380,7 @@ void IO_WriteD(Bitu port,Bitu val) {
 		reg_eip = RealOff(icb)+0x0c;
 		CPU_Exception(cpu.exception.which,cpu.exception.error);
 
-		DOSBOX_RunMachineNoSleep();
+		DOSBOX_RunMachine();
 		iof_queue.used--;
 
 		reg_eax = old_eax;
@@ -404,6 +404,7 @@ Bitu IO_ReadB(Bitu port) {
 		entry->eip=reg_eip;
 		CPU_Push16(SegValue(cs));
 		CPU_Push16(reg_ip);
+		Bit8u old_al = reg_al;
 		Bit16u old_dx = reg_dx;
 		reg_dx = port;
 		RealPt icb = CALLBACK_RealPointer(call_priv_io);
@@ -411,10 +412,11 @@ Bitu IO_ReadB(Bitu port) {
 		reg_eip = RealOff(icb)+0x00;
 		CPU_Exception(cpu.exception.which,cpu.exception.error);
 
-		DOSBOX_RunMachineNoSleep();
+		DOSBOX_RunMachine();
 		iof_queue.used--;
 
 		retval = reg_al;
+		reg_al = old_al;
 		reg_dx = old_dx;
 		memcpy(&lflags,&old_lflags,sizeof(LazyFlags));
 		cpudecoder=old_cpudecoder;
@@ -441,6 +443,7 @@ Bitu IO_ReadW(Bitu port) {
 		entry->eip=reg_eip;
 		CPU_Push16(SegValue(cs));
 		CPU_Push16(reg_ip);
+		Bit16u old_ax = reg_ax;
 		Bit16u old_dx = reg_dx;
 		reg_dx = port;
 		RealPt icb = CALLBACK_RealPointer(call_priv_io);
@@ -448,10 +451,11 @@ Bitu IO_ReadW(Bitu port) {
 		reg_eip = RealOff(icb)+0x02;
 		CPU_Exception(cpu.exception.which,cpu.exception.error);
 
-		DOSBOX_RunMachineNoSleep();
+		DOSBOX_RunMachine();
 		iof_queue.used--;
 
 		retval = reg_ax;
+		reg_ax = old_ax;
 		reg_dx = old_dx;
 		memcpy(&lflags,&old_lflags,sizeof(LazyFlags));
 		cpudecoder=old_cpudecoder;
@@ -477,6 +481,7 @@ Bitu IO_ReadD(Bitu port) {
 		entry->eip=reg_eip;
 		CPU_Push16(SegValue(cs));
 		CPU_Push16(reg_ip);
+		Bit32u old_eax = reg_eax;
 		Bit16u old_dx = reg_dx;
 		reg_dx = port;
 		RealPt icb = CALLBACK_RealPointer(call_priv_io);
@@ -484,10 +489,11 @@ Bitu IO_ReadD(Bitu port) {
 		reg_eip = RealOff(icb)+0x04;
 		CPU_Exception(cpu.exception.which,cpu.exception.error);
 
-		DOSBOX_RunMachineNoSleep();
+		DOSBOX_RunMachine();
 		iof_queue.used--;
 
 		retval = reg_eax;
+		reg_eax = old_eax;
 		reg_dx = old_dx;
 		memcpy(&lflags,&old_lflags,sizeof(LazyFlags));
 		cpudecoder=old_cpudecoder;

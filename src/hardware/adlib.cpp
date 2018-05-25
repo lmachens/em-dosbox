@@ -27,6 +27,14 @@
 #include "mapper.h"
 #include "mem.h"
 #include "dbopl.h"
+#include "nukedopl.h"
+
+#include "mame/emu.h"
+#include "mame/fmopl.h"
+#include "mame/ymf262.h"
+
+#define OPL2_INTERNAL_FREQ    3600000   // The OPL2 operates at 3.6MHz
+#define OPL3_INTERNAL_FREQ    14400000  // The OPL3 operates at 14.4MHz
 
 namespace OPL2 {
 	#include "opl.cpp"
@@ -84,6 +92,116 @@ namespace OPL3 {
 		}
 	};
 }
+
+namespace MAMEOPL2 {
+
+struct Handler : public Adlib::Handler {
+	void* chip;
+
+	virtual void WriteReg(Bit32u reg, Bit8u val) {
+		ym3812_write(chip, 0, reg);
+		ym3812_write(chip, 1, val);
+	}
+	virtual Bit32u WriteAddr(Bit32u port, Bit8u val) {
+		return val;
+	}
+	virtual void Generate(MixerChannel* chan, Bitu samples) {
+		Bit16s buf[1024 * 2];
+		while (samples > 0) {
+			Bitu todo = samples > 1024 ? 1024 : samples;
+			samples -= todo;
+			ym3812_update_one(chip, buf, todo);
+			chan->AddSamples_m16(todo, buf);
+		}
+	}
+	virtual void Init(Bitu rate) {
+		chip = ym3812_init(0, OPL2_INTERNAL_FREQ, rate);
+	}
+	~Handler() {
+		ym3812_shutdown(chip);
+	}
+};
+
+}
+
+
+namespace MAMEOPL3 {
+
+struct Handler : public Adlib::Handler {
+	void* chip;
+
+	virtual void WriteReg(Bit32u reg, Bit8u val) {
+		ymf262_write(chip, 0, reg);
+		ymf262_write(chip, 1, val);
+	}
+	virtual Bit32u WriteAddr(Bit32u port, Bit8u val) {
+		return val;
+	}
+	virtual void Generate(MixerChannel* chan, Bitu samples) {
+		//We generate data for 4 channels, but only the first 2 are connected on a pc
+		Bit16s buf[4][1024];
+		Bit16s result[1024][2];
+		Bit16s* buffers[4] = { buf[0], buf[1], buf[2], buf[3] };
+
+		while (samples > 0) {
+			Bitu todo = samples > 1024 ? 1024 : samples;
+			samples -= todo;
+			ymf262_update_one(chip, buffers, todo);
+			//Interleave the samples before mixing
+			for (Bitu i = 0; i < todo; i++) {
+				result[i][0] = buf[0][i];
+				result[i][1] = buf[1][i];
+			}
+			chan->AddSamples_s16(todo, result[0]);
+		}
+	}
+	virtual void Init(Bitu rate) {
+		chip = ymf262_init(0, OPL3_INTERNAL_FREQ, rate);
+	}
+	~Handler() {
+		ymf262_shutdown(chip);
+	}
+};
+
+}
+
+namespace NukedOPL {
+struct Handler : public Adlib::Handler {
+	opl3_chip chip;
+	Bit8u newm;
+	virtual void WriteReg( Bit32u reg, Bit8u val ) {
+		OPL3_WriteRegBuffered(&chip, (Bit16u)reg, val);
+		if (reg == 0x105)
+			newm = reg & 0x01;
+	}
+	virtual Bit32u WriteAddr( Bit32u port, Bit8u val ) {
+		Bit16u addr;
+		addr = val;
+		if ((port & 2) && (addr == 0x05 || newm)) {
+			addr |= 0x100;
+		}
+		return addr;
+	}
+	virtual void Generate( MixerChannel* chan, Bitu samples ) {
+		Bit16s buf[1024*2];
+		while( samples > 0 ) {
+			Bitu todo = samples > 1024 ? 1024 : samples;
+			samples -= todo;
+			OPL3_GenerateStream(&chip, buf, todo);
+			chan->AddSamples_s16( todo, buf );
+		}
+	}
+	virtual void Init( Bitu rate ) {
+		newm = 0;
+		OPL3_Reset(&chip, rate);
+	}
+	~Handler() {
+	}
+};
+
+}
+
+
 
 #define RAW_SIZE 1024
 
@@ -699,6 +817,7 @@ Module::Module( Section* configuration ) : Module_base(configuration) {
 	Section_prop * section=static_cast<Section_prop *>(configuration);
 	Bitu base = section->Get_hex("sbbase");
 	Bitu rate = section->Get_int("oplrate");
+	Bitu strength = section->Get_int("fmstrength");
 	//Make sure we can't select lower than 8000 to prevent fixed point issues
 	if ( rate < 8000 )
 		rate = 8000;
@@ -706,7 +825,10 @@ Module::Module( Section* configuration ) : Module_base(configuration) {
 	ctrl.mixer = section->Get_bool("sbmixer");
 
 	mixerChan = mixerObject.Install(OPL_CallBack,rate,"FM");
-	mixerChan->SetScale( 2.0 );
+	//Used to be 2.0, which was measured to be too high. Exact value depends on card/clone.
+	float scale = ((float)strength)/100.0;
+	mixerChan->SetScale( scale );
+
 	if (oplemu == "fast") {
 		handler = new DBOPL::Handler();
 	} else if (oplemu == "compat") {
@@ -715,6 +837,17 @@ Module::Module( Section* configuration ) : Module_base(configuration) {
 		} else {
 			handler = new OPL3::Handler();
 		}
+	}
+	else if (oplemu == "mame") {
+		if (oplmode == OPL_opl2) {
+			handler = new MAMEOPL2::Handler();
+		}
+		else {
+			handler = new MAMEOPL3::Handler();
+		}
+	}
+	else if (oplemu == "nuked") {
+		handler = new NukedOPL::Handler();
 	} else {
 		handler = new DBOPL::Handler();
 	}

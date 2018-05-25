@@ -23,11 +23,6 @@
 #include <ctype.h>
 #include <string>
 #include <vector>
-#if defined(EMSCRIPTEN) && defined(EMTERPRETER_SYNC)
-#include <emscripten.h>
-#include <emscripten/fetch.h>
-#include "dos_inc.h"
-#endif
 #include "programs.h"
 #include "support.h"
 #include "drives.h"
@@ -61,9 +56,7 @@
 Bitu DEBUG_EnableDebugger(void);
 #endif
 
-#if !SDL_VERSION_ATLEAST(2,0,0)
 void MSCDEX_SetCDInterface(int intNr, int forceCD);
-#endif
 static Bitu ZDRIVE_NUM = 25;
 
 class MOUNT : public Program {
@@ -82,7 +75,7 @@ public:
 		for (int d = 0;d < DOS_DRIVES;d++) {
 			if (!Drives[d]) continue;
 
-			char root[7] = {'A'+d,':','\\','*','.','*',0};
+			char root[7] = {static_cast<char>('A'+d),':','\\','*','.','*',0};
 			bool ret = DOS_FindFirst(root,DOS_ATTR_VOLUME);
 			if (ret) {
 				dta.GetResult(name,size,date,time,attr);
@@ -190,15 +183,11 @@ public:
 		}
 		/* Show list of cdroms */
 		if (cmd->FindExist("-cd",false)) {
-#if defined(EMSCRIPTEN) || SDL_VERSION_ATLEAST(2,0,0)
-			WriteOut(MSG_Get("PROGRAM_MOUNT_PHYS_CDROMS_NOT_SUPPORTED"));
-#else
 			int num = SDL_CDNumDrives();
    			WriteOut(MSG_Get("PROGRAM_MOUNT_CDROMS_FOUND"),num);
 			for (int i=0; i<num; i++) {
 				WriteOut("%2d. %s\n",i,SDL_CDName(i));
 			};
-#endif
 			return;
 		}
 
@@ -336,22 +325,9 @@ public:
 			if (temp_line[temp_line.size()-1]!=CROSS_FILESPLIT) temp_line+=CROSS_FILESPLIT;
 			Bit8u bit8size=(Bit8u) sizes[1];
 			if (type=="cdrom") {
-#if SDL_VERSION_ATLEAST(2,0,0)
-				if (cmd->FindExist("-usecd",false)
-				    || cmd->FindExist("-aspi",false)
-				    || cmd->FindExist("-ioctl_dio",false)
-				    || cmd->FindExist("-ioctl_dx",false)
-#if defined (WIN32)
-				    || cmd->FindExist("-ioctl_mci",false)
-#endif
-				    || cmd->FindExist("-noioctl",false)
-				) {
-					WriteOut(MSG_Get("PROGRAM_MOUNT_PHYS_CDROMS_NOT_SUPPORTED"));
-					/* Just ignore, mount anyway */
-				}
-#else	// SDL_VERSION_ATLEAST(2,0,0)
 				int num = -1;
 				cmd->FindInt("-usecd",num,true);
+				int error = 0;
 				if (cmd->FindExist("-aspi",false)) {
 					MSCDEX_SetCDInterface(CDROM_USE_ASPI, num);
 				} else if (cmd->FindExist("-ioctl_dio",false)) {
@@ -380,8 +356,6 @@ public:
 					MSCDEX_SetCDInterface(CDROM_USE_IOCTL_DIO, num);
 #endif
 				}
-#endif	// SDL_VERSION_ATLEAST(2,0,0)
-				int error = 0;
 				newdrive  = new cdromDrive(drive,temp_line.c_str(),sizes[0],bit8size,sizes[2],0,mediaid,error);
 				// Check Mscdex, if it worked out...
 				switch (error) {
@@ -429,7 +403,7 @@ public:
 		 * This way every drive except cdroms should get a label.*/
 		else if(type == "dir") { 
 			label = drive; label += "_DRIVE";
-			newdrive->dirCache.SetLabel(label.c_str(),iscdrom,true);
+			newdrive->dirCache.SetLabel(label.c_str(),iscdrom,false);
 		} else if(type == "floppy") {
 			label = drive; label += "_FLOPPY";
 			newdrive->dirCache.SetLabel(label.c_str(),iscdrom,true);
@@ -1379,13 +1353,12 @@ public:
 					}
 				}
 			} else if (fstype=="iso") {
+
 				if (Drives[drive-'A']) {
 					WriteOut(MSG_Get("PROGRAM_IMGMOUNT_ALREADY_MOUNTED"));
 					return;
 				}
-#if !SDL_VERSION_ATLEAST(2,0,0)
 				MSCDEX_SetCDInterface(CDROM_USE_SDL, -1);
-#endif
 				// create new drives for all images
 				std::vector<DOS_Drive*> isoDisks;
 				std::vector<std::string>::size_type i;
@@ -1428,6 +1401,7 @@ public:
 					tmp += "; " + paths[i];
 				}
 				WriteOut(MSG_Get("PROGRAM_MOUNT_STATUS_2"), drive, tmp.c_str());
+
 			} else {
 				FILE *newDisk = fopen(temp_line.c_str(), "rb+");
 				if (!newDisk) {
@@ -1535,121 +1509,11 @@ static void KEYB_ProgramStart(Program * * make) {
 	*make=new KEYB;
 }
 
-#if defined(EMSCRIPTEN) && defined(EMTERPRETER_SYNC) && defined(EMSCRIPTEN_WGET)
-class WGET : public Program {
-public:
-	void Run(void);
-private:
-	static bool fetchsuccess, fetchdone;
-	static void downloadSucceeded(emscripten_fetch_t *fetch);
-	static void downloadFailed(emscripten_fetch_t *fetch);
-};
-
-/* Emscripten won't allow a sync fetch:
- * https://kripken.github.io/emscripten-site/docs/api_reference/fetch.html#synchronous-fetches
- * The program instead waits for these to be called, looping and calling
- * emscripten_sleep_with_yield().
- */
-bool WGET::fetchsuccess = false, WGET::fetchdone = false;
-void WGET::downloadSucceeded(emscripten_fetch_t *fetch) {
-	fetchsuccess = true;
-	fetchdone = true;
-}
-void WGET::downloadFailed(emscripten_fetch_t *fetch) {
-	fetchsuccess = false;
-	fetchdone = true;
-}
-
-void WGET::Run(void) {
-	if(control->SecureMode()) {
-		WriteOut(MSG_Get("PROGRAM_CONFIG_SECURE_DISALLOW"));
-		return;
-	}
-
-	ChangeToLongCmd();
-
-	bool haveoutname = false;
-	std::string outname, url;
-
-	if (cmd->FindString("-o",outname,true)) {
-		haveoutname = true;
-	}
-
-	if (cmd->GetCount() != 1 || !cmd->FindCommand(1, url)) {
-		WriteOut(MSG_Get("PROGRAM_WGET_SHOWHELP"));
-	} else {
-		if (!haveoutname) {
-			std::string::size_type pos = url.rfind('/');
-			if (pos != std::string::npos) {
-				outname = url.substr(pos+1);
-			} else {
-				outname = url;
-			}
-			if (outname.length() == 0) {
-				outname = "index.htm";
-			}
-		}
-
-		emscripten_fetch_attr_t attr;
-		emscripten_fetch_attr_init(&attr);
-		strcpy(attr.requestMethod, "GET");
-		attr.attributes = EMSCRIPTEN_FETCH_LOAD_TO_MEMORY;
-		attr.onsuccess = downloadSucceeded;
-		attr.onerror = downloadFailed;
-		fetchdone = false;
-		emscripten_fetch_t *fetch = emscripten_fetch(&attr, url.c_str());
-		while (!fetchdone) emscripten_sleep_with_yield(10);
-		if (fetchsuccess) {
-			Bit16u fhandle;
-			if (!DOS_CreateFile(outname.c_str(),OPEN_WRITE,&fhandle)) {
-				WriteOut(MSG_Get("PROGRAM_WGET_CREATE_ERR"),outname.c_str());
-			} else {
-				bool success = true;
-				/* Write file in 0xFFFF byte chunks via DOS functions. More
-				 * complicated, but this way there's no need to rescan the
-				 * DOS file system, and it behaves like a real DOS command,
-				 * only writing files that DOS can write.
-				 */
-				uint64_t remain = fetch->numBytes;
-				Bit8u *src = (Bit8u *)fetch->data;
-				while (remain > 0) {
-					Bit16u wrote, chunk = (remain < 0x10000) ? remain : 0xFFFF;
-					wrote = chunk;
-					if (!DOS_WriteFile(fhandle,src,&wrote) || wrote != chunk) {
-						WriteOut(MSG_Get("PROGRAM_WGET_WRITE_ERR"),
-						         outname.c_str());
-						success = false;
-						break;
-					}
-					src += chunk;
-					remain -= chunk;
-				}
-				if (success) {
-					WriteOut(MSG_Get("PROGRAM_WGET_DOWNLOADED"),
-					         fetch->numBytes,fetch->url,outname.c_str());
-				}
-				DOS_CloseFile(fhandle);
-			}
-		} else {
-			WriteOut(MSG_Get("PROGRAM_WGET_HTTP_ERR"),url.c_str(),fetch->status);
-		}
-		emscripten_fetch_close(fetch);
-	}
-}
-
-static void WGET_ProgramStart(Program * * make) {
-	*make=new WGET;
-}
-#endif // defined(EMSCRIPTEN) && defined(EMTERPRETER_SYNC) && defined(EMSCRIPTEN_WGET)
 
 void DOS_SetupPrograms(void) {
 	/*Add Messages */
 
-#if SDL_VERSION_ATLEAST(2,0,0)
-	MSG_Add("PROGRAM_MOUNT_PHYS_CDROMS_NOT_SUPPORTED","Physical CDROMs aren't fully supported. IMGMOUNT may be more useful.\n");
-#else
 	MSG_Add("PROGRAM_MOUNT_CDROMS_FOUND","CDROMs found: %d\n");
-#endif
 	MSG_Add("PROGRAM_MOUNT_STATUS_FORMAT","%-5s  %-58s %-12s\n");
 	MSG_Add("PROGRAM_MOUNT_STATUS_2","Drive %c is mounted as %s\n");
 	MSG_Add("PROGRAM_MOUNT_STATUS_1","The currently mounted drives are:\n");
@@ -1740,11 +1604,7 @@ void DOS_SetupPrograms(void) {
 		);
 	MSG_Add("PROGRAM_INTRO_CDROM",
 		"\033[2J\033[32;1mHow to mount a Real/Virtual CD-ROM Drive in DOSBox:\033[0m\n"
-#if SDL_VERSION_ATLEAST(2,0,0)
-		"DOSBox provides CD-ROM emulation on a few levels.\n"
-#else
 		"DOSBox provides CD-ROM emulation on several levels.\n"
-#endif
 		"\n"
 		"The \033[33mbasic\033[0m level works on all CD-ROM drives and normal directories.\n"
 		"It installs MSCDEX and marks the files read-only.\n"
@@ -1753,14 +1613,6 @@ void DOS_SetupPrograms(void) {
 		"If it doesn't work you might have to tell DOSBox the label of the CD-ROM:\n"
 		"\033[34;1mmount d C:\\example -t cdrom -label CDLABEL\033[0m\n"
 		"\n"
-#if SDL_VERSION_ATLEAST(2,0,0)
-		"The \033[33mhigher\033[0m level adds CD-ROM image mounting support.\n"
-		"Therefore only works on supported CD-ROM images:\n"
-		"\033[34;1mimgmount d \033[0;31mD:\\example.img\033[34;1m -t cdrom\033[0m\n"
-		"\n"
-		"Replace \033[0;31mD:\\\033[0m with the location of your CD-ROM.\n"
-		"Replace \033[0;31mD:\\example.img\033[0m with the location of your CD-ROM image.\n"
-#else
 		"The \033[33mnext\033[0m level adds some low-level support.\n"
 		"Therefore only works on CD-ROM drives:\n"
 		"\033[34;1mmount d \033[0;31mD:\\\033[34;1m -t cdrom -usecd \033[33m0\033[0m\n"
@@ -1774,7 +1626,6 @@ void DOS_SetupPrograms(void) {
 		"Replace \033[0;31mD:\\\033[0m with the location of your CD-ROM.\n"
 		"Replace the \033[33;1m0\033[0m in \033[34;1m-usecd \033[33m0\033[0m with the number reported for your CD-ROM if you type:\n"
 		"\033[34;1mmount -cd\033[0m\n"
-#endif
 		);
 	MSG_Add("PROGRAM_INTRO_SPECIAL",
 		"\033[2J\033[32;1mSpecial keys:\033[0m\n"
@@ -1863,19 +1714,6 @@ void DOS_SetupPrograms(void) {
 	MSG_Add("PROGRAM_KEYB_INVALIDFILE","Keyboard file %s invalid\n");
 	MSG_Add("PROGRAM_KEYB_LAYOUTNOTFOUND","No layout in %s for codepage %i\n");
 	MSG_Add("PROGRAM_KEYB_INVCPFILE","None or invalid codepage file for layout %s\n\n");
-#if defined(EMSCRIPTEN) && defined(EMTERPRETER_SYNC) && defined(EMSCRIPTEN_WGET)
-	MSG_Add("PROGRAM_WGET_SHOWHELP",
-		"\033[32;1mWGET\033[0m [-o FILENAME] URL\n\n"
-		"Downloads file from URL and saves it to the file system.\n"
-		"If file name is not specified, last part of URL is used.\n"
-		"Relative paths can be used (with no need for http://).\n"
-		"Browser same-origin policy limits what you can access.\n"
-		);
-	MSG_Add("PROGRAM_WGET_DOWNLOADED","Got %llu bytes from %s and saved to %s.\n");
-	MSG_Add("PROGRAM_WGET_HTTP_ERR","Downloading %s failed, HTTP status code: %d.\n");
-	MSG_Add("PROGRAM_WGET_CREATE_ERR","Error creating %s file.\n");
-	MSG_Add("PROGRAM_WGET_WRITE_ERR","Error while writing to file.\n");
-#endif
 
 	/*regular setup*/
 	PROGRAMS_MakeFile("MOUNT.COM",MOUNT_ProgramStart);
@@ -1887,7 +1725,4 @@ void DOS_SetupPrograms(void) {
 	PROGRAMS_MakeFile("LOADROM.COM", LOADROM_ProgramStart);
 	PROGRAMS_MakeFile("IMGMOUNT.COM", IMGMOUNT_ProgramStart);
 	PROGRAMS_MakeFile("KEYB.COM", KEYB_ProgramStart);
-#if defined(EMSCRIPTEN) && defined(EMTERPRETER_SYNC) && defined(EMSCRIPTEN_WGET)
-	PROGRAMS_MakeFile("WGET.COM", WGET_ProgramStart);
-#endif
 }

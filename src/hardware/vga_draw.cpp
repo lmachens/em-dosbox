@@ -16,6 +16,7 @@
  *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
  */
 
+
 #include <string.h>
 #include <math.h>
 #include "dosbox.h"
@@ -34,7 +35,7 @@
 typedef Bit8u * (* VGA_Line_Handler)(Bitu vidstart, Bitu line);
 
 static VGA_Line_Handler VGA_DrawLine;
-static Bit8u TempLine[SCALER_MAXWIDTH * 4] __attribute__((aligned(4)));
+static Bit8u TempLine[SCALER_MAXWIDTH * 4];
 
 static Bit8u * VGA_Draw_1BPP_Line(Bitu vidstart, Bitu line) {
 	const Bit8u *base = vga.tandy.draw_base + ((line & vga.tandy.line_mask) << vga.tandy.line_shift);
@@ -274,9 +275,9 @@ static Bit8u * VGA_Draw_VGA_Line_HWMouse( Bitu vidstart, Bitu /*line*/) {
 					if (bitsB&bit) *xat ^= 0xFF; // Invert screen data
 					//else Transparent
 				} else if (bitsB&bit) {
-					*xat = vga.s3.hgc.forestack.u8[0]; // foreground color
+					*xat = vga.s3.hgc.forestack[0]; // foreground color
 				} else {
-					*xat = vga.s3.hgc.backstack.u8[0];
+					*xat = vga.s3.hgc.backstack[0];
 				}
 				xat++;
 			}
@@ -316,9 +317,9 @@ static Bit8u * VGA_Draw_LIN16_Line_HWMouse(Bitu vidstart, Bitu /*line*/) {
 				} else if (bitsB&bit) {
 					// Source as well as destination are Bit8u arrays, 
 					// so this should work out endian-wise?
-					*xat = vga.s3.hgc.forestack.u16;
+					*xat = *(Bit16u*)vga.s3.hgc.forestack;
 				} else {
-					*xat = vga.s3.hgc.backstack.u16;
+					*xat = *(Bit16u*)vga.s3.hgc.backstack;
 				}
 				xat++;
 			}
@@ -354,9 +355,9 @@ static Bit8u * VGA_Draw_LIN32_Line_HWMouse(Bitu vidstart, Bitu /*line*/) {
 					if (bitsB&bit) *xat ^= ~0U;
 					//else Transparent
 				} else if (bitsB&bit) {
-					*xat = vga.s3.hgc.forestack.u32;
+					*xat = *(Bit32u*)vga.s3.hgc.forestack;
 				} else {
-					*xat = vga.s3.hgc.backstack.u32;
+					*xat = *(Bit32u*)vga.s3.hgc.backstack;
 				}
 				xat++;
 			}
@@ -383,11 +384,6 @@ static Bit8u * VGA_TEXT_Draw_Line(Bitu vidstart, Bitu line) {
 	Bits font_addr;
 	Bit32u * draw=(Bit32u *)TempLine;
 	const Bit8u* vidmem = VGA_Text_Memwrap(vidstart);
-#ifdef C_CURSOUT
-	if (line == 0) {
-		TXTOUT_Draw_Line(vidmem, vga.draw.blocks);
-	}
-#endif // C_CURSOUT
 	for (Bitu cx=0;cx<vga.draw.blocks;cx++) {
 		Bitu chr=vidmem[cx*2];
 		Bitu col=vidmem[cx*2+1];
@@ -404,9 +400,6 @@ static Bit8u * VGA_TEXT_Draw_Line(Bitu vidstart, Bitu line) {
 	if (font_addr>=0 && font_addr<(Bits)vga.draw.blocks) {
 		if (line<vga.draw.cursor.sline) goto skip_cursor;
 		if (line>vga.draw.cursor.eline) goto skip_cursor;
-#if C_CURSOUT
-		TXTOUT_SetCursor(font_addr);
-#endif
 		draw=(Bit32u *)&TempLine[font_addr*8];
 		Bit32u att=TXT_FG_Table[vga.tandy.draw_base[vga.draw.cursor.address+1]&0xf];
 		*draw++=att;*draw++=att;
@@ -538,12 +531,6 @@ static Bit8u* VGA_TEXT_Xlat16_Draw_Line(Bitu vidstart, Bitu line) {
 	Bitu blocks = vga.draw.blocks;
 	if (vga.draw.panning) blocks++; // if the text is panned part of an 
 									// additional character becomes visible
-#ifdef C_CURSOUT
-	// This ignores panning
-	if (line == 0) {
-		TXTOUT_Draw_Line(vidmem, vga.draw.blocks);
-	}
-#endif // C_CURSOUT
 	while (blocks--) { // for each character in the line
 		Bitu chr = *vidmem++;
 		Bitu attr = *vidmem++;
@@ -582,9 +569,6 @@ static Bit8u* VGA_TEXT_Xlat16_Draw_Line(Bitu vidstart, Bitu line) {
 		// the adress of the attribute that makes up the cell the cursor is in
 		Bits attr_addr = (vga.draw.cursor.address-vidstart) >> 1;
 		if (attr_addr >= 0 && attr_addr < (Bits)vga.draw.blocks) {
-#if C_CURSOUT
-			TXTOUT_SetCursor(attr_addr);
-#endif
 			Bitu index = attr_addr * (vga.draw.char9dot? 18:16);
 			draw = (Bit16u*)(&TempLine[index]) + 16 - vga.draw.panning;
 			
@@ -817,9 +801,6 @@ static void VGA_PanningLatch(Bitu /*val*/) {
 }
 
 static void VGA_VerticalTimer(Bitu /*val*/) {
-#ifdef C_CURSOUT
-	TXTOUT_StartUpdate();
-#endif
 	vga.draw.delay.framestart = PIC_FullIndex();
 	PIC_AddEvent( VGA_VerticalTimer, (float)vga.draw.delay.vtotal );
 	
@@ -1556,7 +1537,6 @@ void VGA_SetupDrawing(Bitu /*val*/) {
 	vga.changes.frame = 0;
 	vga.changes.writeMask = 1;
 #endif
-
     /* 
 	   Cheap hack to just make all > 640x480 modes have 4:3 aspect ratio
 	*/
@@ -1587,11 +1567,6 @@ void VGA_SetupDrawing(Bitu /*val*/) {
 		vga.draw.delay.vtotal,(1000.0/vga.draw.delay.vtotal),
 		vga.draw.delay.vblkstart,vga.draw.delay.vblkend,
 		vga.draw.delay.vrstart,vga.draw.delay.vrend);
-#endif
-
-#ifdef C_CURSOUT
-	TXTOUT_SetSize(vga.draw.blocks,
-	               vga.draw.lines_total/vga.draw.address_line_total);
 #endif
 
 	// need to resize the output window?

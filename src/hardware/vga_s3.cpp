@@ -21,6 +21,7 @@
 #include "inout.h"
 #include "vga.h"
 #include "mem.h"
+#include "pci_bus.h"
 
 void SVGA_S3_WriteCRTC(Bitu reg,Bitu val,Bitu iolen) {
 	switch (reg) {
@@ -115,12 +116,12 @@ void SVGA_S3_WriteCRTC(Bitu reg,Bitu val,Bitu iolen) {
 		break;
 	case 0x4A:  /* HGC foreground stack */
 		if (vga.s3.hgc.fstackpos > 2) vga.s3.hgc.fstackpos = 0;
-		vga.s3.hgc.forestack.u8[vga.s3.hgc.fstackpos] = val;
+		vga.s3.hgc.forestack[vga.s3.hgc.fstackpos] = val;
 		vga.s3.hgc.fstackpos++;
 		break;
 	case 0x4B:  /* HGC background stack */
 		if (vga.s3.hgc.bstackpos > 2) vga.s3.hgc.bstackpos = 0;
-		vga.s3.hgc.backstack.u8[vga.s3.hgc.bstackpos] = val;
+		vga.s3.hgc.backstack[vga.s3.hgc.bstackpos] = val;
 		vga.s3.hgc.bstackpos++;
 		break;
 	case 0x4c:  /* HGC start address high byte*/
@@ -400,9 +401,9 @@ Bitu SVGA_S3_ReadCRTC( Bitu reg, Bitu iolen) {
 	case 0x49:  /*  HGC orgY */
 		return vga.s3.hgc.originy&0xff;
 	case 0x4A:  /* HGC foreground stack */
-		return vga.s3.hgc.forestack.u8[vga.s3.hgc.fstackpos];
+		return vga.s3.hgc.forestack[vga.s3.hgc.fstackpos];
 	case 0x4B:  /* HGC background stack */
-		return vga.s3.hgc.backstack.u8[vga.s3.hgc.bstackpos];
+		return vga.s3.hgc.backstack[vga.s3.hgc.bstackpos];
 	case 0x50:	// CR50 Extended System Control 1
 		return vga.s3.reg_50;
 	case 0x51:	/* Extended System Control 2 */
@@ -531,7 +532,7 @@ void SVGA_Setup_S3Trio(void) {
 	svga.accepts_mode = &SVGA_S3_AcceptsMode;
 
 	if (vga.vmemsize == 0)
-		vga.vmemsize = 2*1024*1024; // the most common S3 configuration
+		vga.vmemsize = 8*1024*1024; // the most common S3 configuration
 
 	// Set CRTC 36 to specify amount of VRAM and PCI
 	if (vga.vmemsize < 1024*1024) {
@@ -546,9 +547,12 @@ void SVGA_Setup_S3Trio(void) {
 	} else if (vga.vmemsize < 4096*1024)	{
 		vga.vmemsize = 3072*1024;
 		vga.s3.reg_36 = 0x5a;		// 3mb fast page mode
-	} else {	// Trio64 supported only up to 4M
+	} else if (vga.vmemsize < 8192*1024)	{	// Trio64 supported only up to 4M
 		vga.vmemsize = 4096*1024;
 		vga.s3.reg_36 = 0x1a;		// 4mb fast page mode
+	} else {
+		vga.vmemsize = 8192*1024;
+		vga.s3.reg_36 = 0x7a;		// 8 MB fast page mode
 	}
 
 	// S3 ROM signature
@@ -562,4 +566,6 @@ void SVGA_Setup_S3Trio(void) {
 	phys_writeb(rom_base+0x0045,'7');
 	phys_writeb(rom_base+0x0046,'6');
 	phys_writeb(rom_base+0x0047,'4');
+
+	PCI_AddSVGAS3_Device();
 }

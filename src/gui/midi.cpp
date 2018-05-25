@@ -70,6 +70,13 @@ MidiHandler Midi_none;
 
 /* Include different midi drivers, lowest ones get checked first for default */
 
+#ifdef C_FLUIDSYNTH
+#include "midi_fluidsynth.h"
+#endif
+
+#include "midi_mt32.h"
+static MidiHandler_mt32 &Midi_mt32 = MidiHandler_mt32::GetInstance();
+
 #if defined(MACOSX)
 
 #include "midi_coremidi.h"
@@ -130,7 +137,7 @@ void MIDI_RawOutByte(Bit8u data) {
 				}
 			}
 
-			LOG(LOG_ALL,LOG_NORMAL)("Sysex message size %d",midi.sysex.used);
+			LOG(LOG_ALL,LOG_NORMAL)("Sysex message size %d", static_cast<int>(midi.sysex.used));
 			if (CaptureState & CAPTURE_MIDI) {
 				CAPTURE_AddMidi( true, midi.sysex.used-1, &midi.sysex.buf[1]);
 			}
@@ -177,7 +184,7 @@ public:
 			fullconf.erase(fullconf.find("delaysysex"));
 			LOG_MSG("MIDI: Using delayed SysEx processing");
 		}
-		std::remove(fullconf.begin(), fullconf.end(), ' ');
+		trim(fullconf);
 		const char * conf = fullconf.c_str();
 		midi.status=0x00;
 		midi.cmd_pos=0;
