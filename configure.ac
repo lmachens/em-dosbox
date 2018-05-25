@@ -5,6 +5,7 @@ AC_CONFIG_SRCDIR(README)
 
 dnl Check for Emscripten is done early because it needs to change host triplet.
 AS_CASE([$CC],
+        [*emcc.py], [enable_emscripten="yes"],
         [*emcc], [enable_emscripten="yes"],
         [enable_emscripten="no"])
 
@@ -490,6 +491,24 @@ else
    AC_MSG_WARN([Can't find ${LIBSDL_HEADER}_net, internal modem and ipx disabled])
 fi
 
+dnl Emscripten supports SDL_net via ports
+if test "x$enable_emscripten" = "xyes" ; then
+  AC_ARG_WITH(sdl2-net, [AC_HELP_STRING([--with-sdl2-net=no/yes],
+                  [SDL_net is disabled by default for Emscripten, use
+                   this to enable it along with DOSBOX IPX/Modem
+                   functionality.])],
+                  [], [with_sdl2_net=no])
+  AC_MSG_CHECKING(for emscripten/sdl2_net)
+  if test "x$with_sdl2_net" = "xyes" ; then
+    CXXFLAGS="$CXXFLAGS -s USE_SDL_NET=2"
+    AC_DEFINE(C_MODEM,1)
+    AC_DEFINE(C_IPX,1)
+    AC_MSG_RESULT(yes)
+  else
+    AC_MSG_RESULT(no)
+  fi
+fi
+
 AH_TEMPLATE(C_X11_XKB,[define to 1 if you have XKBlib.h and X11 lib])
 dnl Emscripten has X11 headers now, but DOSBox should only use SDL.
 AS_IF([test "x$enable_emscripten" != "xyes"],[
@@ -649,6 +668,31 @@ AS_IF([test "x$enable_emscripten" = "xyes"],[
   ])
 ])
 
+AC_ARG_ENABLE(
+  [filesystem],
+  [AC_HELP_STRING([--enable-filesystem],
+    [Force filesystem inclusion in Emscripten to allow packaging of content])],
+  [], [enable_filesystem=no])
+AM_CONDITIONAL([FILESYSTEM], [test "x$enable_filestem" == "xyes"])
+AS_IF([test "x$enable_emscripten" = "xyes"],
+  AS_IF([test "x$enable_filesystem" = "xyes"],
+    [CXXFLAGS="$CXXFLAGS -s FORCE_FILESYSTEM=1"]
+  )
+)
+
+AH_TEMPLATE(EMSCRIPTEN_WGET,[Define to 1 to enable WGET in Emscripten build, requires Fetch API])
+AC_ARG_ENABLE(
+  [wget],
+  [AC_HELP_STRING([--enable-wget],
+    [Enable WGET DOS command, requires Fetch API, requires WASM to be disabled])],
+  [], [enable_wget=no])
+AM_CONDITIONAL([WGET], [test "x$enable_wget" == "xyes"])
+AS_IF([test "x$enable_emscripten" = "xyes"],
+  AS_IF([test "x$enable_wget" = "xyes"],
+    AC_DEFINE(EMSCRIPTEN_WGET,1)
+    [CXXFLAGS="$CXXFLAGS -s FETCH=1 -s WASM=0"]
+  )
+)
 
 AC_CONFIG_FILES([ 
 Makefile

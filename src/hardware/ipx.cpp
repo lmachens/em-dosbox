@@ -41,6 +41,10 @@
 #include "programs.h"
 #include "pic.h"
 
+#if defined(EMSCRIPTEN) && defined(EMTERPRETER_SYNC)
+#include <emscripten.h>
+#endif
+
 #define SOCKTABLESIZE	150 // DOS IPX driver was limited to 150 open sockets
 
 struct ipxnetaddr {
@@ -566,7 +570,12 @@ static void receivePacket(Bit8u *buffer, Bit16s bufSize) {
 	ECBClass *useECB;
 	ECBClass *nextECB;
 	Bit16u *bufword = (Bit16u *)buffer;
+// Emscripten requires data alignment which isn't garunteed with direct access
+#if defined(EMSCRIPTEN)
+	Bit16u useSocket = SDLNet_Read16(buffer+16);
+#else
 	Bit16u useSocket = swapByte(bufword[8]);
+#endif
 	IPXHeader * tmpHeader;
 	tmpHeader = (IPXHeader *)buffer;
 
@@ -627,7 +636,7 @@ static void sendPacket(ECBClass* sendecb) {
 	Bit16u *wordptr;
 	Bits result;
 	UDPpacket outPacket;
-		
+	
 	sendecb->setInUseFlag(USEFLAG_AVAILABLE);
 	packetsize = 0;
 	fragCount = sendecb->getFragCount(); 
@@ -679,7 +688,6 @@ static void sendPacket(ECBClass* sendecb) {
 	sendecb->getFragDesc(0,&tmpFrag);
 	real_writew(tmpFrag.segment,tmpFrag.offset+2, swapByte(packetsize));
 	
-
 	Bit8u immedAddr[6];
 	sendecb->getImmAddress(immedAddr);
 	// filter out broadcasts and local loopbacks
@@ -806,7 +814,11 @@ bool ConnectToServer(char const *strAddr) {
 
 						return false;
 					}
+#if defined(EMSCRIPTEN) && defined(EMTERPRETER_SYNC)
+					emscripten_sleep_with_yield(100);
+#else
 					CALLBACK_Idle();
+#endif
 					result = SDLNet_UDP_Recv(ipxClientSocket, &regPacket);
 					if (result != 0) {
 						memcpy(localIpxAddr.netnode, regHeader.dest.addr.byNode.node, sizeof(localIpxAddr.netnode));
@@ -1043,7 +1055,11 @@ public:
 				pingSend();
 				ticks = GetTicks();
 				while((GetTicks() - ticks) < 1500) {
+#if defined(EMSCRIPTEN) && defined(EMTERPRETER_SYNC)
+					emscripten_sleep_with_yield(100);
+#else
 					CALLBACK_Idle();
+#endif
 					if(pingCheck(&pingHead)) {
 						WriteOut("Response from %d.%d.%d.%d, port %d time=%dms\n", CONVIP(pingHead.src.addr.byIP.host), SDLNet_Read16(&pingHead.src.addr.byIP.port), GetTicks() - ticks);
 					}
