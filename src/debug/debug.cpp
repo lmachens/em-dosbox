@@ -28,7 +28,7 @@
 #include <iomanip>
 #include <string>
 #include <sstream>
-if defined(EMSCRIPTEN) && defined(EMTERPRETER_SYNC)
+#if defined(EMSCRIPTEN) && defined(EMTERPRETER_SYNC)
 #include <emscripten.h>
 #endif
 using namespace std;
